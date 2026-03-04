@@ -146,5 +146,51 @@ def chat(
     )
 
 
+@app.command()
+def explain(
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="SQL query string to explain"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Path to a .sql file to explain"),
+    db: str = typer.Option(..., help="Database type: postgres|snowflake"),
+    connection: str = typer.Option(..., "--connection", "-c", help="Connection string (DSN for Postgres or account/user/pass/db/schema/wh for Snowflake)"),
+    dialect: str = typer.Option("", help="SQL dialect hint for formatting: postgres, snowflake, spark, etc."),
+    model: Optional[str] = typer.Option(None, help="LLM model override"),
+) -> None:
+    """Run EXPLAIN ANALYZE on a SQL query and get a plain-English interpretation."""
+    config.require_gemini_key()
+
+    if model:
+        config.gemini_model = model
+
+    if not query and not file:
+        console.print("[red]Provide either --query or --file.[/red]")
+        raise typer.Exit(1)
+
+    if file:
+        p = Path(file)
+        if not p.exists():
+            console.print(f"[red]File not found: {file}[/red]")
+            raise typer.Exit(1)
+        sql = p.read_text(encoding="utf-8").strip()
+    else:
+        sql = query.strip()
+
+    if db.lower() not in ("postgres", "snowflake"):
+        console.print("[red]--db must be 'postgres' or 'snowflake'.[/red]")
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent explain[/bold cyan]\n"
+            f"Database: [yellow]{db}[/yellow]  |  Dialect: [yellow]{dialect or 'auto'}[/yellow]",
+            title="Explaining Query",
+            border_style="yellow",
+        )
+    )
+
+    from dataflow_agent.agent import run_explain
+
+    run_explain(sql=sql, db_type=db, connection_string=connection, dialect=dialect)
+
+
 if __name__ == "__main__":
     app()
