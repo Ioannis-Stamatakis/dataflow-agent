@@ -105,6 +105,69 @@ def test_explain_query_postgres_connection_error():
     assert "ERROR" in result
 
 
+def test_generate_dbt_tests_missing_file():
+    from dataflow_agent.tools.framework.dbt import generate_dbt_tests
+    result = generate_dbt_tests.invoke({"model_sql_path": "/nonexistent/model.sql"})
+    assert "ERROR" in result
+
+
+def test_generate_dbt_tests_fixture(tmp_path):
+    from dataflow_agent.tools.framework.dbt import generate_dbt_tests
+    import yaml
+
+    out = tmp_path / "schema.yml"
+    result = generate_dbt_tests.invoke({
+        "model_sql_path": str(FIXTURES / "dbt_model.sql"),
+        "output_path": str(out),
+    })
+
+    assert out.exists(), "schema.yml was not written"
+    schema = yaml.safe_load(out.read_text())
+    assert schema["version"] == 2
+    models = schema["models"]
+    assert len(models) == 1
+    assert models[0]["name"] == "dbt_model"
+
+    col_names = [c["name"] for c in models[0]["columns"]]
+    # Key columns must be present
+    assert "order_id" in col_names
+    assert "customer_id" in col_names
+    assert "email" in col_names
+
+    # order_id should have unique + not_null (it ends in _id and is primary-ish)
+    order_col = next(c for c in models[0]["columns"] if c["name"] == "order_id")
+    assert "not_null" in order_col["tests"]
+
+    # email should have unique + not_null
+    email_col = next(c for c in models[0]["columns"] if c["name"] == "email")
+    assert "unique" in email_col["tests"]
+    assert "not_null" in email_col["tests"]
+
+    # status should have not_null
+    status_col = next(c for c in models[0]["columns"] if c["name"] == "status")
+    assert "not_null" in status_col["tests"]
+
+
+def test_generate_dbt_tests_fk_relationships(tmp_path):
+    from dataflow_agent.tools.framework.dbt import generate_dbt_tests
+    import yaml
+
+    out = tmp_path / "schema.yml"
+    generate_dbt_tests.invoke({
+        "model_sql_path": str(FIXTURES / "dbt_model.sql"),
+        "output_path": str(out),
+    })
+
+    schema = yaml.safe_load(out.read_text())
+    columns = {c["name"]: c for c in schema["models"][0]["columns"]}
+
+    # customer_id should have a relationships test pointing to stg_customers
+    customer_col = columns.get("customer_id", {})
+    tests = customer_col.get("tests", [])
+    rel_tests = [t for t in tests if isinstance(t, dict) and "relationships" in t]
+    assert rel_tests, "customer_id should have a relationships test"
+
+
 def test_slow_query_fixture_analyze():
     from dataflow_agent.tools.sql_analyzer import analyze_sql
     sql = (FIXTURES / "slow_query.sql").read_text()
