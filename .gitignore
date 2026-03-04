@@ -1,0 +1,49 @@
+# Environment and secrets
+.env
+*.env
+CLAUDE.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# LangGraph / LangChain cache
+.langchain.db
+langchain_cache/
+
+# Logs
+*.log
+logs/
+
+# Snowflake
+snowflake_query_results/

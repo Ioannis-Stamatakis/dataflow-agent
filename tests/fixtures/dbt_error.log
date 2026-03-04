@@ -1,0 +1,53 @@
+13:42:01  Running with dbt=1.7.4
+13:42:01  Registered adapter: postgres=1.7.4
+13:42:01  Found 12 models, 8 tests, 3 sources, 0 exposures, 0 metrics, 412 macros, 0 groups, 0 semantic models
+13:42:01
+13:42:01  Concurrency: 4 threads (target='dev')
+13:42:01
+13:42:01  1 of 12 START sql table model analytics.stg_orders ................................ [RUN]
+13:42:02  1 of 12 OK created sql table model analytics.stg_orders .......................... [SELECT 10432 in 1.23s]
+13:42:02  2 of 12 START sql table model analytics.stg_customers .............................. [RUN]
+13:42:03  2 of 12 OK created sql table model analytics.stg_customers ........................ [SELECT 5871 in 0.98s]
+13:42:03  3 of 12 START sql table model analytics.stg_products .............................. [RUN]
+13:42:04  3 of 12 OK created sql table model analytics.stg_products ......................... [SELECT 842 in 0.87s]
+13:42:04  4 of 12 START sql table model analytics.int_order_items ........................... [RUN]
+13:42:06  4 of 12 OK created sql table model analytics.int_order_items ...................... [SELECT 38291 in 2.11s]
+13:42:06  5 of 12 START sql table model analytics.int_customer_orders ........................ [RUN]
+13:42:08  5 of 12 OK created sql table model analytics.int_customer_orders .................. [SELECT 5871 in 1.87s]
+13:42:08  6 of 12 START sql table model analytics.fct_orders ................................ [RUN]
+13:42:10  6 of 12 ERROR creating sql table model analytics.fct_orders ...................... [ERROR in 2.04s]
+13:42:10
+13:42:10  Compilation Error in model fct_orders (models/marts/fct_orders.sql)
+13:42:10    Database Error in model fct_orders (models/marts/fct_orders.sql)
+13:42:10      column "discount_amount" does not exist
+13:42:10      LINE 14:     SUM(oi.discount_amount) AS total_discount,
+13:42:10                       ^
+13:42:10      HINT: Perhaps you meant to reference the column "oi.discount_pct".
+13:42:10    compiled Code at target/compiled/my_project/models/marts/fct_orders.sql
+13:42:10
+13:42:10  7 of 12 START sql table model analytics.fct_customers ............................. [RUN]
+13:42:12  7 of 12 ERROR creating sql table model analytics.fct_customers ................... [ERROR in 1.93s]
+13:42:12
+13:42:12  Database Error in model fct_customers (models/marts/fct_customers.sql)
+13:42:12    relation "analytics.int_customer_lifetime_value" does not exist
+13:42:12    LINE 8:   LEFT JOIN analytics.int_customer_lifetime_value clv ON c.customer_id = clv.customer_id
+13:42:12              ^
+13:42:12
+13:42:12  8 of 12 SKIP relation analytics.rpt_revenue_by_category .......................... [SKIP]
+13:42:12  9 of 12 SKIP relation analytics.rpt_top_customers ............................... [SKIP]
+13:42:12  10 of 12 SKIP relation analytics.rpt_cohort_analysis ............................. [SKIP]
+13:42:12  11 of 12 START test not_null_fct_orders_order_id .................................. [RUN]
+13:42:12  11 of 12 SKIP test not_null_fct_orders_order_id .................................. [SKIP]
+13:42:12  12 of 12 SKIP test unique_fct_orders_order_id .................................... [SKIP]
+13:42:12
+13:42:12  Finished running 5 table models, 2 errors, 5 skipped in 10.87s.
+13:42:12
+13:42:12  Completed with 2 errors and 0 warnings:
+13:42:12
+13:42:12  Database Error in model fct_orders (models/marts/fct_orders.sql)
+13:42:12    column "discount_amount" does not exist
+13:42:12
+13:42:12  Database Error in model fct_customers (models/marts/fct_customers.sql)
+13:42:12    relation "analytics.int_customer_lifetime_value" does not exist
+13:42:12
+13:42:12  Done. PASS=5 WARN=0 ERROR=2 SKIP=5 TOTAL=12

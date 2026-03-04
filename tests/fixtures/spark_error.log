@@ -1,0 +1,43 @@
+24/01/15 14:23:01 INFO SparkContext: Running Spark version 3.4.1
+24/01/15 14:23:01 INFO ResourceUtils: ==============================================================
+24/01/15 14:23:02 INFO SparkUI: Bound SparkUI to 0.0.0.0, and started at http://spark-driver:4040
+24/01/15 14:23:03 INFO SparkContext: Added JAR file:///opt/spark/jars/app.jar at spark://spark-driver:7077/jars/app.jar
+24/01/15 14:23:05 INFO DAGScheduler: Submitting 1 missing tasks from ResultStage 0
+24/01/15 14:23:06 INFO TaskSchedulerImpl: Adding task set 0.0 with 200 tasks
+24/01/15 14:23:07 INFO TaskSetManager: Starting task 0.0 in stage 0.0 (TID 0, executor 1, partition 0, PROCESS_LOCAL, 8192 bytes)
+24/01/15 14:23:07 INFO TaskSetManager: Starting task 0.1 in stage 0.0 (TID 1, executor 2, partition 1, PROCESS_LOCAL, 8192 bytes)
+24/01/15 14:24:15 WARN TaskSetManager: Lost task 12.0 in stage 0.0 (TID 12) on executor 3: java.lang.OutOfMemoryError (GC overhead limit exceeded)
+24/01/15 14:24:15 WARN TaskSetManager: Lost task 13.0 in stage 0.0 (TID 13) on executor 3: java.lang.OutOfMemoryError (GC overhead limit exceeded)
+24/01/15 14:24:16 ERROR ExecutorLostFailure: Executor 3 exited caused by one of the running tasks
+Reason: Container killed by YARN for exceeding memory limits. 8.5 GB of 8 GB physical memory used. Consider boosting spark.yarn.executor.memoryOverhead or disabling yarn.nodemanager.vmem-check-enabled.
+24/01/15 14:24:16 WARN TaskSetManager: Lost task 14.0 in stage 0.0 (TID 14) on executor 3: ExecutorLostFailure (executor 3 exited caused by one of the running tasks)
+24/01/15 14:24:17 INFO DAGScheduler: Executor lost: 3 (epoch 1)
+24/01/15 14:24:17 INFO BlockManagerMasterEndpoint: Trying to remove executor 3 from BlockManagerMaster.
+24/01/15 14:24:18 INFO DAGScheduler: Resubmitting Stage 0 (collect at CustomerSegmentation.scala:142)
+24/01/15 14:25:30 WARN TaskSetManager: Lost task 45.0 in stage 0.0 (TID 45) on executor 2: java.lang.OutOfMemoryError (Java heap space)
+24/01/15 14:25:31 ERROR SparkContext: Error initializing SparkContext.
+java.lang.OutOfMemoryError: Java heap space
+	at java.util.Arrays.copyOf(Arrays.java:3210)
+	at java.util.Arrays.copyOf(Arrays.java:3181)
+	at java.util.ArrayList.grow(ArrayList.java:265)
+	at java.util.ArrayList.ensureExplicitCapacity(ArrayList.java:239)
+	at java.util.ArrayList.ensureCapacityInternal(ArrayList.java:231)
+	at java.util.ArrayList.add(ArrayList.java:462)
+	at org.apache.spark.sql.catalyst.optimizer.CostBasedJoinReorder$$anonfun$reorderJoinStarAware$2.apply(CostBasedJoinReorder.scala:138)
+	at org.apache.spark.sql.execution.datasources.FileSourceStrategy$.apply(FileSourceStrategy.scala:240)
+	at com.example.CustomerSegmentation$.processPartition(CustomerSegmentation.scala:142)
+	at com.example.CustomerSegmentation$.main(CustomerSegmentation.scala:89)
+24/01/15 14:25:31 INFO SparkUI: Stopped Spark web UI at http://spark-driver:4040
+24/01/15 14:25:31 ERROR DAGScheduler: Job 0 failed: collect at CustomerSegmentation.scala:142, took 127.834 s
+org.apache.spark.SparkException: Job aborted due to stage failure: Task 45 in stage 0.0 failed 4 times, most recent failure: Lost task 45.3 in stage 0.0 (TID 187, executor 2, partition 45): java.lang.OutOfMemoryError: Java heap space
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2844)
+	at org.apache.spark.scheduler.DAGScheduler$$anonfun$abortStage$1.apply(DAGScheduler.scala:2783)
+	at org.apache.spark.scheduler.DAGScheduler$$anonfun$abortStage$1.apply(DAGScheduler.scala:2782)
+	at scala.collection.mutable.ResizableArray$class.foreach(ResizableArray.scala:59)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:48)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2782)
+Caused by: java.lang.OutOfMemoryError: Java heap space
+	at com.example.CustomerSegmentation$.processPartition(CustomerSegmentation.scala:142)
+24/01/15 14:25:31 INFO ShutdownHookManager: Shutdown hook called
+24/01/15 14:25:31 INFO ShutdownHookManager: Deleting directory /tmp/spark-abc123

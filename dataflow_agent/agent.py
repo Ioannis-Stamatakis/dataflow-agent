@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+
+from dataflow_agent.config import config
+from dataflow_agent.tools.file_reader import list_files, read_file
+from dataflow_agent.tools.log_reader import read_log
+
+console = Console()
+
+# ---------------------------------------------------------------------------
+# Lazy imports for optional heavy tools (avoids import errors when DB libs
+# are not installed or credentials not set)
+# ---------------------------------------------------------------------------
+
+def _load_all_tools() -> list:
+    tools = [read_log, read_file, list_files]
+
+    try:
+        from dataflow_agent.parsers.error_extractor import extract_errors
+        tools.append(extract_errors)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.sql_analyzer import analyze_sql
+        tools.append(analyze_sql)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.schema_inspector import inspect_schema
+        tools.append(inspect_schema)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.framework.dbt import parse_dbt_manifest
+        tools.append(parse_dbt_manifest)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.framework.airflow import parse_airflow_dag
+        tools.append(parse_airflow_dag)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.framework.prefect import parse_prefect_flow
+        tools.append(parse_prefect_flow)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.framework.spark import parse_spark_log
+        tools.append(parse_spark_log)
+    except ImportError:
+        pass
+
+    try:
+        from dataflow_agent.tools.file_writer import write_fix
+        tools.append(write_fix)
+    except ImportError:
+        pass
+
+    return tools
+
+
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
+
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+    framework: str
+    project_path: str | None
+    fix_mode: bool
+    diagnosis: str | None
+
+
+# ---------------------------------------------------------------------------
+# System prompt builder
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """You are dataflow-agent, an expert AI assistant for diagnosing, explaining, and fixing broken or slow data pipelines.
+
+You support the following frameworks: dbt, Apache Airflow, Prefect, and Apache Spark.
+You can introspect PostgreSQL and Snowflake schemas, parse SQL queries, and read log files.
+
+## Your approach
+1. Read any provided log files or project files first.
+2. Extract and analyze errors using available tools.
+3. Identify the root cause with a clear explanation.
+4. If fix_mode is enabled, propose specific code changes using write_fix.
+5. Always explain your reasoning in plain English that a data engineer would find actionable.
+
+## Output format
+- Lead with a short **Root Cause** summary.
+- Follow with **Explanation** (what went wrong and why).
+- Then **Recommended Fix** (concrete steps or code changes).
+- If you cannot determine the cause, say so and list what additional information would help.
+
+Current framework: {framework}
+Fix mode: {fix_mode}
+"""
+
+
+def _build_system_prompt(framework: str, fix_mode: bool) -> SystemMessage:
+    return SystemMessage(
+        content=SYSTEM_PROMPT.format(framework=framework, fix_mode=fix_mode)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Graph nodes
+# ---------------------------------------------------------------------------
+
+def context_loader(state: AgentState) -> AgentState:
+    """Pre-process: no-op pass-through (context is injected via initial messages)."""
+    return state
+
+
+def make_agent_node(llm_with_tools):
+    def agent_node(state: AgentState) -> AgentState:
+        response = llm_with_tools.invoke(state["messages"])
+        return {"messages": [response]}
+    return agent_node
+
+
+def should_continue(state: AgentState) -> str:
+    last = state["messages"][-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+    return END
+
+
+# ---------------------------------------------------------------------------
+# Graph builder
+# ---------------------------------------------------------------------------
+
+def _build_graph(tools: list):
+    llm = ChatGoogleGenerativeAI(
+        model=config.gemini_model,
+        google_api_key=config.gemini_api_key,
+        temperature=0,
+    )
+    llm_with_tools = llm.bind_tools(tools)
+
+    tool_node = ToolNode(tools)
+
+    graph = StateGraph(AgentState)
+    graph.add_node("context_loader", context_loader)
+    graph.add_node("agent_node", make_agent_node(llm_with_tools))
+    graph.add_node("tools_node", tool_node)
+
+    graph.add_edge(START, "context_loader")
+    graph.add_edge("context_loader", "agent_node")
+    graph.add_conditional_edges("agent_node", should_continue, {"tools": "tools_node", END: END})
+    graph.add_edge("tools_node", "agent_node")
+
+    return graph.compile()
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+
+def _build_initial_messages(
+    task: str,
+    framework: str,
+    log_path: str | None,
+    project_path: str | None,
+    dag_path: str | None,
+    db_type: str | None,
+    fix_mode: bool,
+    extra_message: str | None = None,
+) -> list[BaseMessage]:
+    system = _build_system_prompt(framework, fix_mode)
+
+    parts = [f"Task: **{task}** for a **{framework}** pipeline."]
+    if log_path:
+        parts.append(f"Log file to analyze: `{log_path}`")
+    if project_path:
+        parts.append(f"Project directory: `{project_path}`")
+    if dag_path:
+        parts.append(f"DAG/flow file: `{dag_path}`")
+    if db_type:
+        parts.append(f"Database type: `{db_type}`")
+    if fix_mode:
+        parts.append("Fix mode is **enabled** — propose and apply fixes.")
+    if extra_message:
+        parts.append(extra_message)
+
+    parts.append(
+        "\nPlease begin your analysis. Use your tools to read any relevant files, "
+        "then provide your diagnosis."
+    )
+
+    human = HumanMessage(content="\n".join(parts))
+    return [system, human]
+
+
+def run_agent(
+    task: str,
+    framework: str,
+    log_path: str | None = None,
+    project_path: str | None = None,
+    dag_path: str | None = None,
+    db_type: str | None = None,
+    fix_mode: bool = False,
+) -> None:
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    initial_messages = _build_initial_messages(
+        task=task,
+        framework=framework,
+        log_path=log_path,
+        project_path=project_path,
+        dag_path=dag_path,
+        db_type=db_type,
+        fix_mode=fix_mode,
+    )
+
+    initial_state: AgentState = {
+        "messages": initial_messages,
+        "framework": framework,
+        "project_path": project_path,
+        "fix_mode": fix_mode,
+        "diagnosis": None,
+    }
+
+    console.print("[dim]Running agent...[/dim]")
+
+    final_state = graph.invoke(initial_state)
+    last_message = final_state["messages"][-1]
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(last_message.content),
+            title=f"[bold green]Diagnosis — {framework}[/bold green]",
+            border_style="green",
+        )
+    )
+
+
+def run_chat(
+    framework: str,
+    log_path: str | None = None,
+    project_path: str | None = None,
+    dag_path: str | None = None,
+    db_type: str | None = None,
+) -> None:
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    system = _build_system_prompt(framework, fix_mode=False)
+    context_parts = [f"Starting interactive session for a **{framework}** pipeline."]
+    if log_path:
+        context_parts.append(f"Log file available: `{log_path}`")
+    if project_path:
+        context_parts.append(f"Project directory: `{project_path}`")
+    if dag_path:
+        context_parts.append(f"DAG/flow file: `{dag_path}`")
+    if db_type:
+        context_parts.append(f"Database: `{db_type}`")
+    context_parts.append(
+        "\nI'm ready to help. What would you like to know about this pipeline?"
+    )
+
+    messages: list[BaseMessage] = [
+        system,
+        HumanMessage(content="\n".join(context_parts)),
+    ]
+
+    state: AgentState = {
+        "messages": messages,
+        "framework": framework,
+        "project_path": project_path,
+        "fix_mode": False,
+        "diagnosis": None,
+    }
+
+    # Get initial greeting
+    result = graph.invoke(state)
+    last = result["messages"][-1]
+    console.print(Panel(Markdown(last.content), title="[bold magenta]Agent[/bold magenta]", border_style="magenta"))
+
+    # Update state with full message history
+    state = result
+
+    while True:
+        try:
+            user_input = console.input("\n[bold cyan]You>[/bold cyan] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Session ended.[/dim]")
+            break
+
+        if user_input.lower() in ("exit", "quit", "q"):
+            console.print("[dim]Goodbye![/dim]")
+            break
+
+        if not user_input:
+            continue
+
+        state["messages"] = list(state["messages"]) + [HumanMessage(content=user_input)]
+        result = graph.invoke(state)
+        last = result["messages"][-1]
+        console.print(
+            Panel(Markdown(last.content), title="[bold magenta]Agent[/bold magenta]", border_style="magenta")
+        )
+        state = result

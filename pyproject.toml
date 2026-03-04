@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dataflow-agent"
+version = "0.1.0"
+description = "AI-powered data pipeline debugger using Gemini and LangGraph"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-google-genai>=1.0.0",
+    "langchain-core>=0.3.0",
+    "typer[all]>=0.12.0",
+    "rich>=13.0.0",
+    "sqlglot>=25.0.0",
+    "psycopg2-binary>=2.9.0",
+    "snowflake-connector-python>=3.0.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+dataflow-agent = "dataflow_agent.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dataflow_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
