@@ -5,6 +5,218 @@ from langchain_core.tools import tool
 
 
 @tool
+def explain_query(
+    query: str,
+    db_type: str,
+    connection_string: str,
+    dialect: str = "",
+) -> str:
+    """Run EXPLAIN ANALYZE on a SQL query and return a plain-English interpretation.
+
+    Executes the query plan against a live database, then returns the raw plan
+    plus structured observations about sequential scans, missing indexes,
+    expensive sorts, bad join strategies, and row estimate errors.
+
+    Args:
+        query: The SELECT query to explain (must be a read-only SELECT).
+        db_type: Database type: 'postgres' or 'snowflake'.
+        connection_string: DSN for Postgres (postgresql://user:pass@host/db)
+                           or Snowflake account string (account/user/password/db/schema/wh).
+        dialect: Optional sqlglot dialect hint for query formatting.
+    """
+    db_type = db_type.lower().strip()
+    if db_type == "postgres":
+        return _explain_postgres(query, connection_string, dialect)
+    elif db_type in ("snowflake", "snow"):
+        return _explain_snowflake(query, connection_string)
+    else:
+        return f"ERROR: Unknown db_type '{db_type}'. Use 'postgres' or 'snowflake'."
+
+
+# ---------------------------------------------------------------------------
+# Postgres
+# ---------------------------------------------------------------------------
+
+def _explain_postgres(query: str, dsn: str, dialect: str) -> str:
+    try:
+        import psycopg2
+    except ImportError:
+        return "ERROR: psycopg2 not installed. Run: pip install psycopg2-binary"
+
+    # Safety: only allow SELECT statements
+    stripped = query.strip().lstrip("(").upper()
+    if not stripped.startswith(("SELECT", "WITH", "TABLE")):
+        return "ERROR: explain_query only accepts SELECT / WITH / TABLE statements for safety."
+
+    try:
+        conn = psycopg2.connect(dsn)
+        conn.set_session(readonly=True)
+        cur = conn.cursor()
+        cur.execute(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {query}")
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as exc:
+        return f"ERROR running EXPLAIN ANALYZE: {exc}"
+
+    plan_lines = [row[0] for row in rows]
+    plan_text = "\n".join(plan_lines)
+
+    observations = _analyze_postgres_plan(plan_text)
+
+    sections = [
+        "=== QUERY PLAN ===",
+        plan_text,
+        "",
+        "=== OBSERVATIONS ===",
+    ]
+    sections.extend(f"  {o}" for o in observations)
+    return "\n".join(sections)
+
+
+def _analyze_postgres_plan(plan: str) -> list[str]:
+    obs: list[str] = []
+
+    # Seq scans
+    seq_scans = re.findall(r"Seq Scan on (\S+)", plan)
+    if seq_scans:
+        tables = ", ".join(dict.fromkeys(seq_scans))
+        obs.append(
+            f"SEQUENTIAL SCAN on: {tables} — consider adding an index on the filter columns"
+        )
+
+    # Nested loop with large row estimates
+    if re.search(r"Nested Loop.*rows=\d{5,}", plan, re.DOTALL):
+        obs.append(
+            "NESTED LOOP join on large row sets detected — a Hash Join or Merge Join may be faster"
+        )
+
+    # Hash join spill to disk
+    if re.search(r"Batches: [2-9]\d*|Batches: \d{2,}", plan):
+        obs.append(
+            "HASH JOIN spilling to disk (multiple batches) — increase work_mem to keep it in memory"
+        )
+
+    # Sort spill
+    if re.search(r"Sort Method: external", plan, re.IGNORECASE):
+        obs.append(
+            "SORT spilling to disk — increase work_mem or add an index to avoid the sort"
+        )
+
+    # Row estimate errors (actual >> estimated)
+    misestimates = re.findall(
+        r"rows=(\d+).*?actual.*?rows=(\d+)", plan
+    )
+    for est, actual in misestimates:
+        est_n, actual_n = int(est), int(actual)
+        if actual_n > 0 and est_n > 0:
+            ratio = max(est_n, actual_n) / min(est_n, actual_n)
+            if ratio >= 100:
+                obs.append(
+                    f"ROW ESTIMATE ERROR: planner estimated {est_n} rows but got {actual_n} "
+                    f"({ratio:.0f}x off) — run ANALYZE on the table to update statistics"
+                )
+                break  # report once
+
+    # Index scans (good — just note them)
+    index_scans = re.findall(r"Index(?:\s+Only)?\s+Scan(?:\s+Backward)?\s+using\s+(\S+)", plan)
+    if index_scans:
+        obs.append(f"INDEX SCAN used: {', '.join(dict.fromkeys(index_scans))} ✓")
+
+    # Execution time
+    exec_time = re.search(r"Execution Time:\s+([\d.]+)\s+ms", plan)
+    if exec_time:
+        ms = float(exec_time.group(1))
+        label = "✓ fast" if ms < 100 else ("moderate" if ms < 1000 else "SLOW — consider optimization")
+        obs.append(f"EXECUTION TIME: {ms:.2f} ms — {label}")
+
+    # Planning time
+    plan_time = re.search(r"Planning Time:\s+([\d.]+)\s+ms", plan)
+    if plan_time:
+        ms = float(plan_time.group(1))
+        if ms > 500:
+            obs.append(
+                f"PLANNING TIME: {ms:.2f} ms is high — complex query with many joins/subqueries"
+            )
+
+    if not obs:
+        obs.append("No significant issues found in the query plan.")
+
+    return obs
+
+
+# ---------------------------------------------------------------------------
+# Snowflake
+# ---------------------------------------------------------------------------
+
+def _explain_snowflake(query: str, connection_string: str) -> str:
+    try:
+        import snowflake.connector
+    except ImportError:
+        return "ERROR: snowflake-connector-python not installed."
+
+    stripped = query.strip().lstrip("(").upper()
+    if not stripped.startswith(("SELECT", "WITH", "TABLE")):
+        return "ERROR: explain_query only accepts SELECT / WITH / TABLE statements for safety."
+
+    parts = connection_string.split("/")
+    if len(parts) < 3:
+        return "ERROR: Snowflake connection_string must be: account/user/password[/database[/schema[/warehouse]]]"
+
+    account, user, password = parts[0], parts[1], parts[2]
+    conn_kwargs: dict = {"account": account, "user": user, "password": password}
+    if len(parts) > 3:
+        conn_kwargs["database"] = parts[3]
+    if len(parts) > 4:
+        conn_kwargs["schema"] = parts[4]
+    if len(parts) > 5:
+        conn_kwargs["warehouse"] = parts[5]
+
+    try:
+        conn = snowflake.connector.connect(**conn_kwargs)
+        cur = conn.cursor()
+        cur.execute(f"EXPLAIN {query}")
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as exc:
+        return f"ERROR running EXPLAIN on Snowflake: {exc}"
+
+    plan_lines = [str(row) for row in rows]
+    plan_text = "\n".join(plan_lines)
+
+    observations = _analyze_snowflake_plan(plan_text)
+
+    sections = [
+        "=== SNOWFLAKE QUERY PLAN ===",
+        plan_text,
+        "",
+        "=== OBSERVATIONS ===",
+    ]
+    sections.extend(f"  {o}" for o in observations)
+    return "\n".join(sections)
+
+
+def _analyze_snowflake_plan(plan: str) -> list[str]:
+    obs: list[str] = []
+    plan_upper = plan.upper()
+
+    if "TABLE SCAN" in plan_upper:
+        obs.append(
+            "FULL TABLE SCAN detected — ensure the query filters on clustering keys or partition columns"
+        )
+    if "CARTESIAN" in plan_upper:
+        obs.append("CARTESIAN PRODUCT in plan — check for missing JOIN conditions")
+    if "SORT" in plan_upper:
+        obs.append("SORT operation present — large sorts may spill to remote storage on Snowflake")
+    if "UNION" in plan_upper:
+        obs.append("UNION detected — use UNION ALL if duplicates don't need to be removed (avoids dedup pass)")
+
+    if not obs:
+        obs.append("No significant issues found in the Snowflake query plan.")
+
+    return obs
+
+
+@tool
 def analyze_sql(query: str, dialect: str = "ansi") -> str:
     """Parse, lint, and provide optimization hints for a SQL query using sqlglot.
 

@@ -32,8 +32,9 @@ def _load_all_tools() -> list:
         pass
 
     try:
-        from dataflow_agent.tools.sql_analyzer import analyze_sql
+        from dataflow_agent.tools.sql_analyzer import analyze_sql, explain_query
         tools.append(analyze_sql)
+        tools.append(explain_query)
     except ImportError:
         pass
 
@@ -321,3 +322,57 @@ def run_chat(
             Panel(Markdown(last.content), title="[bold magenta]Agent[/bold magenta]", border_style="magenta")
         )
         state = result
+
+
+def run_explain(
+    sql: str,
+    db_type: str,
+    connection_string: str,
+    dialect: str = "",
+) -> None:
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    system = SystemMessage(content=(
+        "You are dataflow-agent, an expert SQL performance analyst. "
+        "You have access to explain_query and analyze_sql tools. "
+        "When given a SQL query and database credentials:\n"
+        "1. Call explain_query to get the live query plan from the database.\n"
+        "2. Call analyze_sql to get static linting and optimization hints.\n"
+        "3. Synthesize both into a clear, actionable report with:\n"
+        "   - **Performance Summary** (one sentence verdict)\n"
+        "   - **Query Plan Findings** (what the planner is doing and why it's slow)\n"
+        "   - **Optimization Recommendations** (specific, prioritized action items)\n"
+        "   - **Rewritten Query** (if meaningful improvements are possible)\n"
+        "Be specific — mention table names, index names, and execution times from the plan."
+    ))
+
+    parts = [
+        f"Please explain and optimize this SQL query against a **{db_type}** database.\n",
+        f"**Connection string:** `{connection_string}`",
+        f"**Dialect:** `{dialect or db_type}`\n",
+        "**Query:**",
+        f"```sql\n{sql}\n```",
+        "\nStart by calling explain_query, then analyze_sql, then give your full report.",
+    ]
+
+    initial_state: AgentState = {
+        "messages": [system, HumanMessage(content="\n".join(parts))],
+        "framework": "sql",
+        "project_path": None,
+        "fix_mode": False,
+        "diagnosis": None,
+    }
+
+    console.print("[dim]Running EXPLAIN ANALYZE...[/dim]")
+    final_state = graph.invoke(initial_state)
+    last = final_state["messages"][-1]
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(last.content),
+            title="[bold yellow]Query Explanation[/bold yellow]",
+            border_style="yellow",
+        )
+    )
