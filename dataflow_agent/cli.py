@@ -146,6 +146,41 @@ def chat(
     )
 
 
+@app.command(name="generate-tests")
+def generate_tests(
+    model: Path = typer.Option(..., "--model", "-m", help="Path to the dbt model .sql file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output path for schema.yml (default: same dir as model)"),
+    manifest: Optional[Path] = typer.Option(None, "--manifest", help="Optional path to manifest.json for FK cross-referencing"),
+    model_override: Optional[str] = typer.Option(None, "--model-override", help="LLM model override"),
+) -> None:
+    """Generate a schema.yml with dbt tests inferred from a model's SQL."""
+    if not model.exists():
+        console.print(f"[red]Model file not found: {model}[/red]")
+        raise typer.Exit(1)
+
+    if model_override:
+        config.gemini_model = model_override
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent generate-tests[/bold cyan]\n"
+            f"Model: [yellow]{model}[/yellow]",
+            title="Generating dbt Tests",
+            border_style="cyan",
+        )
+    )
+
+    from dataflow_agent.tools.framework.dbt import generate_dbt_tests
+
+    result = generate_dbt_tests.invoke({
+        "model_sql_path": str(model),
+        "output_path": str(output) if output else "",
+        "manifest_path": str(manifest) if manifest else "",
+    })
+
+    console.print(f"\n[green]{result.splitlines()[0]}[/green]")
+
+
 @app.command()
 def explain(
     query: Optional[str] = typer.Option(None, "--query", "-q", help="SQL query string to explain"),

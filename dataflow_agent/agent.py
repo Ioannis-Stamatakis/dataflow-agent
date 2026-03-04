@@ -45,8 +45,9 @@ def _load_all_tools() -> list:
         pass
 
     try:
-        from dataflow_agent.tools.framework.dbt import parse_dbt_manifest
+        from dataflow_agent.tools.framework.dbt import parse_dbt_manifest, generate_dbt_tests
         tools.append(parse_dbt_manifest)
+        tools.append(generate_dbt_tests)
     except ImportError:
         pass
 
