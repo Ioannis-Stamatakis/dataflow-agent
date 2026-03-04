@@ -367,7 +367,7 @@ def _build_schema_yml(
 
 
 def _infer_ref_model(col: str, known_models: set[str]) -> str | None:
-    base = col.removeprefix("_id")
+    base = col.removesuffix("_id")
     # Try exact and pluralised forms, plus common stg_/int_/fct_ prefixes
     candidates = [base, base + "s", base.rstrip("s")]
     for prefix in ("stg_", "int_", "fct_", "dim_", "raw_"):
