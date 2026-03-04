@@ -13,7 +13,7 @@ load_dotenv()
 
 class Config(BaseModel):
     gemini_api_key: str = Field(default="")
-    gemini_model: str = Field(default="gemini-2.0-flash")
+    gemini_model: str = Field(default="gemini-2.5-flash")
     postgres_url: str | None = Field(default=None)
     snowflake_account: str | None = Field(default=None)
     snowflake_user: str | None = Field(default=None)
@@ -26,7 +26,7 @@ class Config(BaseModel):
     @classmethod
     def load_from_env(cls, values: dict) -> dict:
         values.setdefault("gemini_api_key", os.getenv("GEMINI_API_KEY", ""))
-        values.setdefault("gemini_model", os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+        values.setdefault("gemini_model", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
         values.setdefault("postgres_url", os.getenv("POSTGRES_URL"))
         values.setdefault("snowflake_account", os.getenv("SNOWFLAKE_ACCOUNT"))
         values.setdefault("snowflake_user", os.getenv("SNOWFLAKE_USER"))

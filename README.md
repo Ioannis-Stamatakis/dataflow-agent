@@ -5,7 +5,7 @@
 **AI-powered data pipeline debugger**
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Gemini](https://img.shields.io/badge/Gemini-2.0_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://aistudio.google.com/)
+[![Gemini](https://img.shields.io/badge/Gemini-2.5_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://aistudio.google.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://github.com/langchain-ai/langgraph)
 [![License](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-10%20passed-22C55E?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
@@ -117,7 +117,7 @@ cp .env.example .env
 GEMINI_API_KEY=your_gemini_api_key_here
 
 # Optional — defaults shown
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash
 
 # Optional — for schema introspection
 POSTGRES_URL=postgresql://user:password@localhost:5432/mydb
