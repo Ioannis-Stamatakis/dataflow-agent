@@ -74,6 +74,12 @@ def _load_all_tools() -> list:
     except ImportError:
         pass
 
+    try:
+        from dataflow_agent.tools.dbt_profiler import profile_dbt_project
+        tools.append(profile_dbt_project)
+    except ImportError:
+        pass
+
     return tools
 
 
@@ -322,6 +328,51 @@ def run_chat(
             Panel(Markdown(last.content), title="[bold magenta]Agent[/bold magenta]", border_style="magenta")
         )
         state = result
+
+
+def run_profile(project_path: str, top_n: int = 10) -> None:
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    system = SystemMessage(content=(
+        "You are dataflow-agent, an expert dbt code reviewer and data engineer. "
+        "You have access to the profile_dbt_project tool. "
+        "When given a dbt project path:\n"
+        "1. Call profile_dbt_project to get the complexity report.\n"
+        "2. Synthesize the results into a clear, actionable summary with:\n"
+        "   - **Project Health Overview** (one-paragraph verdict)\n"
+        "   - **Top Risks** (the most complex/problematic models and why)\n"
+        "   - **Quick Wins** (easy fixes that would reduce complexity immediately)\n"
+        "   - **Refactoring Recommendations** (longer-term structural improvements)\n"
+        "Be specific — name the actual model files and explain what makes each one risky."
+    ))
+
+    parts = [
+        f"Please profile this dbt project: `{project_path}`",
+        f"Show the top {top_n} most complex models.",
+        "\nCall profile_dbt_project first, then give your full analysis.",
+    ]
+
+    initial_state: AgentState = {
+        "messages": [system, HumanMessage(content="\n".join(parts))],
+        "framework": "dbt",
+        "project_path": project_path,
+        "fix_mode": False,
+        "diagnosis": None,
+    }
+
+    console.print("[dim]Profiling dbt project...[/dim]")
+    final_state = graph.invoke(initial_state)
+    last = final_state["messages"][-1]
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(last.content),
+            title="[bold cyan]dbt Project Profile[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
 
 def run_explain(
