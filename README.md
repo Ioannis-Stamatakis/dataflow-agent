@@ -49,6 +49,8 @@ diagnose, explain, and fix broken or slow data pipelines.
 | 📐 **SQL analysis** | sqlglot-powered parsing, linting, and optimization hints (indexes, skew, wildcards, etc.) |
 | 💬 **Chat mode** | Multi-turn session with the full pipeline context retained across turns |
 | 🧩 **Framework-aware** | Dedicated parsers for dbt artifacts, Airflow DAGs, Prefect flows, and Spark driver logs |
+| 📊 **dbt project profiler** | Scans all SQL models, scores complexity (CTEs, JOINs, anti-patterns), ranks by risk |
+| 🧪 **dbt test generator** | Infers and writes a `schema.yml` with `not_null`, `unique`, and FK tests from model SQL |
 
 ---
 
@@ -75,7 +77,8 @@ diagnose, explain, and fix broken or slow data pipelines.
 │                                                                 │
 │   Tools available to the agent:                                 │
 │   read_log · read_file · list_files · extract_errors            │
-│   analyze_sql · inspect_schema · parse_dbt_manifest             │
+│   analyze_sql · explain_query · inspect_schema                  │
+│   parse_dbt_manifest · generate_dbt_tests · profile_dbt_project │
 │   parse_airflow_dag · parse_prefect_flow · parse_spark_log      │
 │   write_fix                                                     │
 └─────────────────────────────────────────────────────────────────┘
@@ -208,6 +211,30 @@ You> What other models depend on fct_orders?
 Agent> Based on the manifest, three models reference fct_orders: ...
 ```
 
+### `profile` — rank dbt models by complexity
+
+Scans every `.sql` file under `models/`, scores each by CTEs, JOINs, subqueries, and anti-patterns, and returns a ranked report with LLM-generated refactoring recommendations.
+
+```bash
+dataflow-agent profile ./my_dbt_project
+
+# Show top 20 models instead of the default 10
+dataflow-agent profile ./my_dbt_project --top 20
+```
+
+### `generate-tests` — generate a `schema.yml` from model SQL
+
+Infers `not_null`, `unique`, and foreign-key tests from a model's SQL and writes a ready-to-use `schema.yml`.
+
+```bash
+dataflow-agent generate-tests --model ./models/marts/fct_orders.sql
+
+# Write to a specific output path
+dataflow-agent generate-tests \
+  --model ./models/marts/fct_orders.sql \
+  --output ./models/marts/schema.yml
+```
+
 ### `--model` — override the LLM
 
 ```bash
@@ -246,7 +273,7 @@ dataflow-agent chat --framework airflow \
 ```
 dataflow-agent/
 ├── dataflow_agent/
-│   ├── cli.py                   # Typer CLI: diagnose · optimize · chat
+│   ├── cli.py                   # Typer CLI: diagnose · optimize · chat · profile · generate-tests
 │   ├── agent.py                 # LangGraph graph, state, nodes, chat loop
 │   ├── config.py                # Pydantic settings loaded from .env
 │   ├── tools/
@@ -254,9 +281,10 @@ dataflow-agent/
 │   │   ├── file_reader.py       # read_file · list_files
 │   │   ├── file_writer.py       # write_fix  (Rich diff + y/n prompt)
 │   │   ├── schema_inspector.py  # inspect_schema  (Postgres + Snowflake)
-│   │   ├── sql_analyzer.py      # analyze_sql  (sqlglot lint + hints)
+│   │   ├── sql_analyzer.py      # analyze_sql · explain_query
+│   │   ├── dbt_profiler.py      # profile_dbt_project  (complexity ranking)
 │   │   └── framework/
-│   │       ├── dbt.py           # parse_dbt_manifest
+│   │       ├── dbt.py           # parse_dbt_manifest · generate_dbt_tests
 │   │       ├── airflow.py       # parse_airflow_dag
 │   │       ├── prefect.py       # parse_prefect_flow
 │   │       └── spark.py         # parse_spark_log
@@ -268,8 +296,9 @@ dataflow-agent/
 │   │   ├── airflow_error.log    # Airflow KeyError after 3 retry attempts
 │   │   ├── spark_error.log      # Spark OOM → executor loss → job abort
 │   │   ├── broken_dag.py        # Airflow DAG with column bug + catchup=True
-│   │   └── fct_orders.sql       # dbt model with wrong column reference
-│   └── test_tools.py            # 10 smoke tests (all passing)
+│   │   ├── fct_orders.sql       # dbt model with wrong column reference
+│   │   └── dbt_model.sql        # dbt model fixture for test generation
+│   └── test_tools.py            # smoke tests (all passing)
 ├── .env.example
 ├── .gitignore
 └── pyproject.toml
