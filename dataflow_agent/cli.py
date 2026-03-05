@@ -227,5 +227,35 @@ def explain(
     run_explain(sql=sql, db_type=db, connection_string=connection, dialect=dialect)
 
 
+@app.command()
+def profile(
+    project: Path = typer.Argument(..., help="Path to the dbt project root"),
+    top: int = typer.Option(10, "--top", "-n", help="Number of top complex models to show"),
+    model: Optional[str] = typer.Option(None, help="LLM model override"),
+) -> None:
+    """Profile all SQL models in a dbt project and rank them by complexity."""
+    config.require_gemini_key()
+
+    if model:
+        config.gemini_model = model
+
+    if not project.exists():
+        console.print(f"[red]Path not found: {project}[/red]")
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent profile[/bold cyan]\n"
+            f"Project: [yellow]{project}[/yellow]  |  Top N: [yellow]{top}[/yellow]",
+            title="Profiling dbt Project",
+            border_style="cyan",
+        )
+    )
+
+    from dataflow_agent.agent import run_profile
+
+    run_profile(project_path=str(project), top_n=top)
+
+
 if __name__ == "__main__":
     app()
