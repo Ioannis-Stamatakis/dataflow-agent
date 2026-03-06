@@ -50,6 +50,7 @@ diagnose, explain, and fix broken or slow data pipelines.
 | 🧩 **Framework-aware** | Dedicated parsers for dbt artifacts, Airflow DAGs, Prefect flows, and Spark driver logs |
 | 📊 **dbt project profiler** | Scans all SQL models, scores complexity (CTEs, JOINs, anti-patterns), ranks by risk |
 | 🧪 **dbt test generator** | Infers and writes a `schema.yml` with `not_null`, `unique`, and FK tests from model SQL |
+| 🔗 **dbt lineage tracer** | Traces upstream/downstream model dependencies from `manifest.json` or SQL `ref()` scan; optional AI impact analysis |
 
 ---
 
@@ -75,11 +76,11 @@ diagnose, explain, and fix broken or slow data pipelines.
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 │   Tools available to the agent:                                 │
-│   read_log · read_file · list_files · extract_errors            │
-│   analyze_sql · explain_query · inspect_schema                  │
-│   parse_dbt_manifest · generate_dbt_tests · profile_dbt_project │
-│   parse_airflow_dag · parse_prefect_flow · parse_spark_log      │
-│   write_fix                                                     │
+│   read_log · read_file · list_files · extract_errors             │
+│   analyze_sql · explain_query · inspect_schema                   │
+│   parse_dbt_manifest · generate_dbt_tests · trace_dbt_lineage   │
+│   profile_dbt_project · parse_airflow_dag · parse_prefect_flow  │
+│   parse_spark_log · write_fix                                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -234,6 +235,24 @@ dataflow-agent generate-tests \
   --output ./models/marts/schema.yml
 ```
 
+### `lineage` — trace dbt model dependencies
+
+Builds an upstream/downstream dependency graph from `manifest.json` (preferred) or by scanning `ref()`/`source()` calls in SQL files. No API key required unless `--analyze` is used.
+
+```bash
+# From manifest
+dataflow-agent lineage fct_orders --manifest ./target/manifest.json
+
+# From project directory (SQL scan fallback)
+dataflow-agent lineage fct_orders --project ./my_dbt_project
+
+# Upstream only, limited to 2 hops
+dataflow-agent lineage fct_orders -m ./target/manifest.json -d upstream --depth 2
+
+# AI-powered impact analysis (requires GEMINI_API_KEY)
+dataflow-agent lineage fct_orders -m ./target/manifest.json --analyze
+```
+
 ### `--model` — override the LLM
 
 ```bash
@@ -272,8 +291,8 @@ dataflow-agent chat --framework airflow \
 ```
 dataflow-agent/
 ├── dataflow_agent/
-│   ├── cli.py                   # Typer CLI: diagnose · optimize · chat · profile · generate-tests
-│   ├── agent.py                 # LangGraph graph, state, nodes, chat loop
+│   ├── cli.py                   # Typer CLI: diagnose · optimize · chat · profile · generate-tests · lineage · explain
+│   ├── agent.py                 # LangGraph graph, state, nodes, chat loop, run_* entry points
 │   ├── config.py                # Pydantic settings loaded from .env
 │   ├── tools/
 │   │   ├── log_reader.py        # read_log
@@ -283,7 +302,7 @@ dataflow-agent/
 │   │   ├── sql_analyzer.py      # analyze_sql · explain_query
 │   │   ├── dbt_profiler.py      # profile_dbt_project  (complexity ranking)
 │   │   └── framework/
-│   │       ├── dbt.py           # parse_dbt_manifest · generate_dbt_tests
+│   │       ├── dbt.py           # parse_dbt_manifest · generate_dbt_tests · trace_dbt_lineage
 │   │       ├── airflow.py       # parse_airflow_dag
 │   │       ├── prefect.py       # parse_prefect_flow
 │   │       └── spark.py         # parse_spark_log
@@ -296,8 +315,9 @@ dataflow-agent/
 │   │   ├── spark_error.log      # Spark OOM → executor loss → job abort
 │   │   ├── broken_dag.py        # Airflow DAG with column bug + catchup=True
 │   │   ├── fct_orders.sql       # dbt model with wrong column reference
-│   │   └── dbt_model.sql        # dbt model fixture for test generation
-│   └── test_tools.py            # smoke tests (all passing)
+│   │   ├── dbt_model.sql        # dbt model fixture for test generation
+│   │   └── manifest.json        # minimal dbt manifest with multi-layer lineage graph
+│   └── test_tools.py            # 24 smoke tests (all passing)
 ├── .env.example
 ├── .gitignore
 └── pyproject.toml
