@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v9/manifest.json",
+    "dbt_version": "1.7.0",
+    "generated_at": "2024-01-01T00:00:00.000000Z",
+    "invocation_id": "test-invocation-id"
+  },
+  "nodes": {
+    "model.my_project.stg_orders": {
+      "unique_id": "model.my_project.stg_orders",
+      "name": "stg_orders",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["source.my_project.raw.orders"]
+      }
+    },
+    "model.my_project.stg_customers": {
+      "unique_id": "model.my_project.stg_customers",
+      "name": "stg_customers",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["source.my_project.raw.customers"]
+      }
+    },
+    "model.my_project.int_order_items": {
+      "unique_id": "model.my_project.int_order_items",
+      "name": "int_order_items",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["model.my_project.stg_orders"]
+      }
+    },
+    "model.my_project.fct_orders": {
+      "unique_id": "model.my_project.fct_orders",
+      "name": "fct_orders",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": [
+          "model.my_project.int_order_items",
+          "model.my_project.stg_customers"
+        ]
+      }
+    },
+    "model.my_project.mart_revenue": {
+      "unique_id": "model.my_project.mart_revenue",
+      "name": "mart_revenue",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["model.my_project.fct_orders"]
+      }
+    },
+    "model.my_project.rpt_daily_orders": {
+      "unique_id": "model.my_project.rpt_daily_orders",
+      "name": "rpt_daily_orders",
+      "resource_type": "model",
+      "depends_on": {
+        "nodes": ["model.my_project.fct_orders"]
+      }
+    }
+  },
+  "sources": {
+    "source.my_project.raw.orders": {
+      "unique_id": "source.my_project.raw.orders",
+      "name": "orders",
+      "source_name": "raw",
+      "resource_type": "source"
+    },
+    "source.my_project.raw.customers": {
+      "unique_id": "source.my_project.raw.customers",
+      "name": "customers",
+      "source_name": "raw",
+      "resource_type": "source"
+    }
+  },
+  "exposures": {}
+}

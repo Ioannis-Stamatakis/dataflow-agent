@@ -257,5 +257,57 @@ def profile(
     run_profile(project_path=str(project), top_n=top)
 
 
+@app.command()
+def lineage(
+    model_name: str = typer.Argument(..., help="dbt model name (without .sql)"),
+    project: Optional[Path] = typer.Option(None, "-p", "--project", help="Path to dbt project root"),
+    manifest: Optional[Path] = typer.Option(None, "-m", "--manifest", help="Path to dbt manifest.json"),
+    direction: str = typer.Option("both", "-d", "--direction", help="upstream | downstream | both"),
+    depth: int = typer.Option(-1, "--depth", help="Max traversal depth (-1 = unlimited)"),
+    analyze: bool = typer.Option(False, "-a", "--analyze", help="AI-powered impact analysis (requires GEMINI_API_KEY)"),
+    model: Optional[str] = typer.Option(None, help="LLM model override"),
+) -> None:
+    """Trace upstream/downstream lineage for a dbt model."""
+    if not project and not manifest:
+        console.print("[red]Provide at least one of --project or --manifest.[/red]")
+        raise typer.Exit(1)
+
+    if manifest and not manifest.exists():
+        console.print(f"[red]Manifest not found: {manifest}[/red]")
+        raise typer.Exit(1)
+
+    if project and not project.exists():
+        console.print(f"[red]Project path not found: {project}[/red]")
+        raise typer.Exit(1)
+
+    if direction not in ("upstream", "downstream", "both"):
+        console.print("[red]--direction must be 'upstream', 'downstream', or 'both'.[/red]")
+        raise typer.Exit(1)
+
+    if analyze:
+        config.require_gemini_key()
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent lineage[/bold cyan]\n"
+            f"Model: [yellow]{model_name}[/yellow]  |  Direction: [yellow]{direction}[/yellow]  |  Depth: [yellow]{depth}[/yellow]",
+            title="dbt Lineage",
+            border_style="blue",
+        )
+    )
+
+    from dataflow_agent.agent import run_lineage
+
+    run_lineage(
+        model_name=model_name,
+        project_path=str(project) if project else "",
+        manifest_path=str(manifest) if manifest else "",
+        direction=direction,
+        depth=depth,
+        analyze=analyze,
+        llm_model=model,
+    )
+
+
 if __name__ == "__main__":
     app()

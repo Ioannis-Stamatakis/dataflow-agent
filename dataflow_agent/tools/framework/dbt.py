@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -400,3 +401,217 @@ def _preview_and_write(yml_str: str, out_path: Path) -> None:
         out_path.write_text(yml_str, encoding="utf-8")
     except Exception as exc:
         print(f"ERROR writing {out_path}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# dbt lineage tracer
+# ---------------------------------------------------------------------------
+
+@tool
+def trace_dbt_lineage(
+    model_name: str,
+    project_path: str = "",
+    manifest_path: str = "",
+    direction: str = "both",
+    depth: int = -1,
+) -> str:
+    """Trace upstream and downstream lineage for a dbt model.
+
+    Builds a dependency graph from manifest.json (preferred) or by scanning
+    SQL files for ref() and source() calls (fallback).
+
+    Args:
+        model_name: dbt model name (without .sql extension).
+        project_path: Path to the dbt project root (used for SQL scan fallback).
+        manifest_path: Path to dbt manifest.json (preferred).
+        direction: 'upstream', 'downstream', or 'both' (default: both).
+        depth: Max traversal depth; -1 means unlimited.
+    """
+    if not manifest_path and not project_path:
+        return "ERROR: Provide at least one of manifest_path or project_path."
+
+    children: dict[str, set[str]] = defaultdict(set)
+    parents: dict[str, set[str]] = defaultdict(set)
+    node_types: dict[str, str] = {}
+
+    # --- Build graph from manifest.json ---
+    if manifest_path:
+        mp = Path(manifest_path)
+        if not mp.exists():
+            return f"ERROR: Manifest not found: {manifest_path}"
+        try:
+            data: dict[str, Any] = json.loads(mp.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return f"ERROR parsing manifest JSON: {exc}"
+
+        nodes: dict = data.get("nodes", {})
+        sources: dict = data.get("sources", {})
+        exposures: dict = data.get("exposures", {})
+
+        # Register sources
+        for uid, src in sources.items():
+            src_name = f"{src.get('source_name', '')}.{src.get('name', '')}"
+            node_types[src_name] = "source"
+            # Also register by unique_id short name for dep resolution
+            node_types[uid] = "source"
+
+        # Register models, tests, exposures
+        for uid, node in nodes.items():
+            rt = node.get("resource_type", "model")
+            name = node.get("name", uid.split(".")[-1])
+            node_types[name] = rt
+
+        for uid, exp in exposures.items():
+            name = exp.get("name", uid.split(".")[-1])
+            node_types[name] = "exposure"
+
+        # Build edges from depends_on
+        for uid, node in {**nodes, **exposures}.items():
+            rt = node.get("resource_type", "model")
+            name = node.get("name", uid.split(".")[-1])
+            deps = node.get("depends_on", {}).get("nodes", [])
+            for dep_uid in deps:
+                # Resolve dep to short name
+                if dep_uid in sources:
+                    src = sources[dep_uid]
+                    dep_name = f"{src.get('source_name', '')}.{src.get('name', '')}"
+                    node_types[dep_name] = "source"
+                else:
+                    dep_node = nodes.get(dep_uid, {})
+                    dep_name = dep_node.get("name", dep_uid.split(".")[-1])
+                parents[name].add(dep_name)
+                children[dep_name].add(name)
+
+    # --- SQL scan fallback ---
+    elif project_path:
+        pp = Path(project_path)
+        if not pp.exists():
+            return f"ERROR: Project path not found: {project_path}"
+        sql_files = list(pp.rglob("*.sql"))
+        for sql_file in sql_files:
+            m_name = sql_file.stem
+            node_types.setdefault(m_name, "model")
+            try:
+                sql_text = sql_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            # ref() dependencies
+            for ref_match in re.finditer(r"{{\s*ref\(['\"](\w+)['\"]\)\s*}}", sql_text):
+                dep = ref_match.group(1)
+                node_types.setdefault(dep, "model")
+                parents[m_name].add(dep)
+                children[dep].add(m_name)
+            # source() dependencies
+            for src_match in re.finditer(
+                r"{{\s*source\(['\"](\w+)['\"],\s*['\"](\w+)['\"]\)\s*}}", sql_text
+            ):
+                src_name = f"{src_match.group(1)}.{src_match.group(2)}"
+                node_types[src_name] = "source"
+                parents[m_name].add(src_name)
+                children[src_name].add(m_name)
+
+    # --- Validate model exists in graph ---
+    all_nodes = set(node_types.keys()) | set(parents.keys()) | set(children.keys())
+    if model_name not in all_nodes:
+        return f"ERROR: Model '{model_name}' not found in the dependency graph."
+
+    lines = [f"dbt Lineage: {model_name}\n"]
+
+    if direction in ("upstream", "both"):
+        upstream_tree = _trace_upstream(model_name, parents, depth, visited=set())
+        ancestor_count = _count_all(model_name, parents)
+        lines.append(f"=== UPSTREAM ({ancestor_count} ancestors) ===")
+        lines.append(_render_tree(model_name, upstream_tree, node_types, arrow="<-", indent=0))
+        lines.append("")
+
+    if direction in ("downstream", "both"):
+        downstream_tree = _trace_downstream(model_name, children, depth, visited=set())
+        dependent_count = _count_all(model_name, children)
+        lines.append(f"=== DOWNSTREAM ({dependent_count} dependents) ===")
+        lines.append(_render_tree(model_name, downstream_tree, node_types, arrow="->", indent=0))
+        lines.append("")
+
+    direct_parents = sorted(parents.get(model_name, set()))
+    direct_children = sorted(children.get(model_name, set()))
+    total_ancestors = _count_all(model_name, parents)
+    total_dependents = _count_all(model_name, children)
+
+    lines.append("=== IMPACT SUMMARY ===")
+    lines.append(f"  Direct parents:  {len(direct_parents)}  |  Total ancestors:  {total_ancestors}")
+    lines.append(f"  Direct children: {len(direct_children)}  |  Total dependents: {total_dependents}")
+
+    return "\n".join(lines)
+
+
+def _trace_upstream(
+    model: str,
+    parents: dict[str, set[str]],
+    max_depth: int,
+    visited: set[str],
+    current_depth: int = 0,
+) -> dict[str, Any]:
+    """Return nested dict of upstream ancestors."""
+    if model in visited:
+        return {}
+    if max_depth != -1 and current_depth >= max_depth:
+        return {}
+    visited = visited | {model}
+    result: dict[str, Any] = {}
+    for parent in sorted(parents.get(model, set())):
+        result[parent] = _trace_upstream(parent, parents, max_depth, visited, current_depth + 1)
+    return result
+
+
+def _trace_downstream(
+    model: str,
+    children: dict[str, set[str]],
+    max_depth: int,
+    visited: set[str],
+    current_depth: int = 0,
+) -> dict[str, Any]:
+    """Return nested dict of downstream dependents."""
+    if model in visited:
+        return {}
+    if max_depth != -1 and current_depth >= max_depth:
+        return {}
+    visited = visited | {model}
+    result: dict[str, Any] = {}
+    for child in sorted(children.get(model, set())):
+        result[child] = _trace_downstream(child, children, max_depth, visited, current_depth + 1)
+    return result
+
+
+def _count_all(model: str, adjacency: dict[str, set[str]]) -> int:
+    """BFS count of all reachable nodes from model (excluding model itself)."""
+    visited: set[str] = set()
+    queue = list(adjacency.get(model, set()))
+    while queue:
+        node = queue.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        queue.extend(adjacency.get(node, set()))
+    return len(visited)
+
+
+def _render_tree(
+    root: str,
+    tree: dict[str, Any],
+    node_types: dict[str, str],
+    arrow: str,
+    indent: int,
+) -> str:
+    """Recursively render a lineage tree as indented text."""
+    prefix = "  " * indent
+    ntype = node_types.get(root, "model")
+    if ntype == "source":
+        label = f"{root} [source]"
+    elif ntype == "exposure":
+        label = f"{root} [exposure]"
+    else:
+        label = root
+
+    lines = [f"{prefix}{label}"]
+    for child_name, subtree in tree.items():
+        lines.append(f"{"  " * (indent + 1)}{arrow} {_render_tree(child_name, subtree, node_types, arrow, 0).strip()}")
+    return "\n".join(lines)
