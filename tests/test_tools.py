@@ -177,3 +177,90 @@ def test_slow_query_fixture_analyze():
     result = analyze_sql.invoke({"query": sql_clean, "dialect": "postgres"})
     assert "SELECT *" in result or "Avoid SELECT" in result
     assert "ORDER BY" in result or "LIMIT" in result or "sort" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Lineage tests
+# ---------------------------------------------------------------------------
+
+def test_trace_lineage_missing_manifest():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "fct_orders",
+        "manifest_path": "/nonexistent/manifest.json",
+    })
+    assert "ERROR" in result
+
+
+def test_trace_lineage_model_not_found():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "nonexistent_model",
+        "manifest_path": str(FIXTURES / "manifest.json"),
+    })
+    assert "ERROR" in result
+    assert "nonexistent_model" in result
+
+
+def test_trace_lineage_from_manifest():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "fct_orders",
+        "manifest_path": str(FIXTURES / "manifest.json"),
+        "direction": "both",
+    })
+    assert "UPSTREAM" in result
+    assert "DOWNSTREAM" in result
+    assert "stg_orders" in result or "int_order_items" in result
+    assert "mart_revenue" in result or "rpt_daily_orders" in result
+    assert "IMPACT SUMMARY" in result
+
+
+def test_trace_lineage_upstream_only():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "fct_orders",
+        "manifest_path": str(FIXTURES / "manifest.json"),
+        "direction": "upstream",
+    })
+    assert "UPSTREAM" in result
+    assert "DOWNSTREAM" not in result
+
+
+def test_trace_lineage_downstream_only():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "fct_orders",
+        "manifest_path": str(FIXTURES / "manifest.json"),
+        "direction": "downstream",
+    })
+    assert "DOWNSTREAM" in result
+    assert "UPSTREAM" not in result
+    assert "mart_revenue" in result or "rpt_daily_orders" in result
+
+
+def test_trace_lineage_from_sql_scan():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "fct_orders",
+        "project_path": str(FIXTURES),
+        "direction": "both",
+    })
+    assert "fct_orders" in result
+    # fct_orders refs int_order_items and stg_customers
+    assert "int_order_items" in result or "stg_customers" in result
+    assert "IMPACT SUMMARY" in result
+
+
+def test_trace_lineage_depth_limited():
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+    result = trace_dbt_lineage.invoke({
+        "model_name": "fct_orders",
+        "manifest_path": str(FIXTURES / "manifest.json"),
+        "direction": "upstream",
+        "depth": 1,
+    })
+    # With depth=1, direct parents are shown (int_order_items, stg_customers)
+    assert "int_order_items" in result or "stg_customers" in result
+    # stg_orders is a grandparent (depth=2), should NOT appear
+    assert "stg_orders" not in result

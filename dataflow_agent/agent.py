@@ -45,9 +45,10 @@ def _load_all_tools() -> list:
         pass
 
     try:
-        from dataflow_agent.tools.framework.dbt import parse_dbt_manifest, generate_dbt_tests
+        from dataflow_agent.tools.framework.dbt import parse_dbt_manifest, generate_dbt_tests, trace_dbt_lineage
         tools.append(parse_dbt_manifest)
         tools.append(generate_dbt_tests)
+        tools.append(trace_dbt_lineage)
     except ImportError:
         pass
 
@@ -426,5 +427,86 @@ def run_explain(
             Markdown(last.content),
             title="[bold yellow]Query Explanation[/bold yellow]",
             border_style="yellow",
+        )
+    )
+
+
+def run_lineage(
+    model_name: str,
+    project_path: str = "",
+    manifest_path: str = "",
+    direction: str = "both",
+    depth: int = -1,
+    analyze: bool = False,
+    llm_model: str | None = None,
+) -> None:
+    from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
+
+    if llm_model:
+        config.gemini_model = llm_model
+
+    if not analyze:
+        result = trace_dbt_lineage.invoke({
+            "model_name": model_name,
+            "project_path": project_path,
+            "manifest_path": manifest_path,
+            "direction": direction,
+            "depth": depth,
+        })
+        console.print()
+        console.print(
+            Panel(
+                result,
+                title=f"[bold blue]dbt Lineage — {model_name}[/bold blue]",
+                border_style="blue",
+            )
+        )
+        return
+
+    # AI-powered analysis
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    system = SystemMessage(content=(
+        "You are dataflow-agent, an expert dbt data engineer and lineage analyst. "
+        "You have access to the trace_dbt_lineage tool. "
+        "When asked to analyze a model's lineage:\n"
+        "1. Call trace_dbt_lineage to retrieve the full dependency graph.\n"
+        "2. Synthesize the results into a clear impact analysis with:\n"
+        "   - **Upstream Risk** (which sources/models this depends on and where failures could cascade from)\n"
+        "   - **Downstream Impact** (what breaks if this model changes or fails)\n"
+        "   - **Testing Gaps** (layers of the graph with insufficient test coverage)\n"
+        "   - **Recommendations** (concrete steps to improve reliability and observability)\n"
+        "Be specific — name the actual models and explain their roles."
+    ))
+
+    parts = [
+        f"Please analyze the lineage for dbt model: `{model_name}`",
+    ]
+    if manifest_path:
+        parts.append(f"Manifest path: `{manifest_path}`")
+    if project_path:
+        parts.append(f"Project path: `{project_path}`")
+    parts.append(f"Direction: `{direction}`  |  Depth: `{depth}`")
+    parts.append("\nCall trace_dbt_lineage first, then give your full impact analysis.")
+
+    initial_state: AgentState = {
+        "messages": [system, HumanMessage(content="\n".join(parts))],
+        "framework": "dbt",
+        "project_path": project_path or None,
+        "fix_mode": False,
+        "diagnosis": None,
+    }
+
+    console.print("[dim]Analyzing lineage...[/dim]")
+    final_state = graph.invoke(initial_state)
+    last = final_state["messages"][-1]
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(last.content),
+            title=f"[bold blue]dbt Lineage Analysis — {model_name}[/bold blue]",
+            border_style="blue",
         )
     )
