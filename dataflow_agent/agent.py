@@ -82,6 +82,12 @@ def _load_all_tools() -> list:
     except ImportError:
         pass
 
+    try:
+        from dataflow_agent.tools.drift_detector import detect_schema_drift
+        tools.append(detect_schema_drift)
+    except ImportError:
+        pass
+
     return tools
 
 
@@ -508,5 +514,80 @@ def run_lineage(
             Markdown(last.content),
             title=f"[bold blue]dbt Lineage Analysis — {model_name}[/bold blue]",
             border_style="blue",
+        )
+    )
+
+
+def run_drift(
+    schema_yml_path: str,
+    db_type: str,
+    connection_string: str,
+    model_name: str = "",
+    analyze: bool = False,
+) -> None:
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+
+    if not analyze:
+        result = detect_schema_drift.invoke({
+            "schema_yml_path": schema_yml_path,
+            "db_type": db_type,
+            "connection_string": connection_string,
+            "model_name": model_name,
+        })
+        console.print()
+        console.print(
+            Panel(
+                result,
+                title="[bold red]Schema Drift Report[/bold red]",
+                border_style="red",
+            )
+        )
+        return
+
+    # AI-powered remediation analysis
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    system = SystemMessage(content=(
+        "You are dataflow-agent, an expert dbt data engineer specializing in schema management. "
+        "You have access to the detect_schema_drift tool. "
+        "When asked to analyze schema drift:\n"
+        "1. Call detect_schema_drift to retrieve the full drift report.\n"
+        "2. Synthesize the findings into an actionable remediation plan with:\n"
+        "   - **Drift Summary** (one-paragraph overview of what drifted and likely causes)\n"
+        "   - **Missing Columns** (columns in schema.yml not in DB — were they dropped? Should they be removed from schema.yml?)\n"
+        "   - **Undocumented Columns** (columns in DB not in schema.yml — should they be added with tests?)\n"
+        "   - **Type Mismatches** (explain the risk and suggest ALTER TABLE or schema.yml corrections)\n"
+        "   - **Recommended Actions** (prioritized, concrete steps with code snippets where helpful)\n"
+        "Be specific — name the actual columns and suggest exact schema.yml patches or SQL statements."
+    ))
+
+    parts = [
+        f"Please analyze schema drift for: `{schema_yml_path}`",
+        f"Database type: `{db_type}`",
+        f"Connection: `{connection_string}`",
+    ]
+    if model_name:
+        parts.append(f"Model: `{model_name}`")
+    parts.append("\nCall detect_schema_drift first, then give your full remediation plan.")
+
+    initial_state: AgentState = {
+        "messages": [system, HumanMessage(content="\n".join(parts))],
+        "framework": "dbt",
+        "project_path": None,
+        "fix_mode": False,
+        "diagnosis": None,
+    }
+
+    console.print("[dim]Detecting schema drift...[/dim]")
+    final_state = graph.invoke(initial_state)
+    last = final_state["messages"][-1]
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(last.content),
+            title="[bold red]Schema Drift Analysis[/bold red]",
+            border_style="red",
         )
     )
