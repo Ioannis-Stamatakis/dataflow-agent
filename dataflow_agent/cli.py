@@ -309,5 +309,50 @@ def lineage(
     )
 
 
+@app.command()
+def drift(
+    schema: Path = typer.Option(..., "--schema", "-s", help="Path to schema.yml"),
+    db: str = typer.Option(..., help="Database type: postgres|snowflake"),
+    connection: str = typer.Option(..., "--connection", "-c", help="Connection string (DSN for Postgres or account/user/pass/db/schema/wh for Snowflake)"),
+    model_name: Optional[str] = typer.Option(None, "--model", "-m", help="Specific model name to check (default: all models in file)"),
+    analyze: bool = typer.Option(False, "-a", "--analyze", help="AI-powered remediation advice (requires GEMINI_API_KEY)"),
+    model: Optional[str] = typer.Option(None, help="LLM model override"),
+) -> None:
+    """Detect schema drift between a dbt schema.yml and the live database."""
+    if not schema.exists():
+        console.print(f"[red]schema.yml not found: {schema}[/red]")
+        raise typer.Exit(1)
+
+    if db.lower() not in ("postgres", "snowflake"):
+        console.print("[red]--db must be 'postgres' or 'snowflake'.[/red]")
+        raise typer.Exit(1)
+
+    if analyze:
+        config.require_gemini_key()
+
+    if model:
+        config.gemini_model = model
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent drift[/bold cyan]\n"
+            f"Schema: [yellow]{schema}[/yellow]  |  DB: [yellow]{db}[/yellow]"
+            + (f"  |  Model: [yellow]{model_name}[/yellow]" if model_name else ""),
+            title="Schema Drift Detection",
+            border_style="red",
+        )
+    )
+
+    from dataflow_agent.agent import run_drift
+
+    run_drift(
+        schema_yml_path=str(schema),
+        db_type=db,
+        connection_string=connection,
+        model_name=model_name or "",
+        analyze=analyze,
+    )
+
+
 if __name__ == "__main__":
     app()
