@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: "Orders fact table"
+    columns:
+      - name: order_id
+        data_type: integer
+        tests: [unique, not_null]
+      - name: customer_id
+        data_type: integer
+        tests: [not_null]
+      - name: status
+        data_type: varchar
+        tests: [not_null]
+      - name: ghost_column
+        data_type: text

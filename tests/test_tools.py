@@ -252,6 +252,104 @@ def test_trace_lineage_from_sql_scan():
     assert "IMPACT SUMMARY" in result
 
 
+# ---------------------------------------------------------------------------
+# Drift detector tests
+# ---------------------------------------------------------------------------
+
+def test_detect_schema_drift_missing_file():
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": "/nonexistent/schema.yml",
+        "db_type": "postgres",
+        "connection_string": "postgresql://user:pass@localhost/db",
+    })
+    assert "ERROR" in result
+
+
+def test_detect_schema_drift_bad_db_type():
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": str(FIXTURES / "schema_drift.yml"),
+        "db_type": "mysql",
+        "connection_string": "mysql://user:pass@localhost/db",
+    })
+    assert "ERROR" in result or "Unknown db_type" in result
+
+
+def test_detect_schema_drift_connection_error():
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": str(FIXTURES / "schema_drift.yml"),
+        "db_type": "postgres",
+        "connection_string": "postgresql://fake:fake@localhost:9999/fakedb",
+    })
+    assert "ERROR" in result or "connection error" in result.lower()
+
+
+def test_detect_schema_drift_model_not_found():
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": str(FIXTURES / "schema_drift.yml"),
+        "db_type": "postgres",
+        "connection_string": "postgresql://user:pass@localhost/db",
+        "model_name": "nonexistent_model",
+    })
+    assert "ERROR" in result
+    assert "nonexistent_model" in result
+
+
+def test_detect_schema_drift_no_drift(tmp_path):
+    from dataflow_agent.tools.drift_detector import (
+        _compare_columns,
+        _format_model_drift,
+    )
+    defined = {
+        "order_id": {"name": "order_id", "data_type": "integer"},
+        "status": {"name": "status", "data_type": "varchar"},
+    }
+    live = {"order_id": "integer", "status": "varchar"}
+    drift = _compare_columns(defined, live)
+    assert drift["missing_in_db"] == []
+    assert drift["undocumented"] == []
+    assert drift["type_mismatch"] == []
+    report = _format_model_drift("test_model", drift)
+    assert "No drift detected" in report
+
+
+def test_detect_schema_drift_missing_column(tmp_path):
+    from dataflow_agent.tools.drift_detector import _compare_columns
+    defined = {
+        "order_id": {"name": "order_id", "data_type": "integer"},
+        "ghost_col": {"name": "ghost_col", "data_type": "text"},
+    }
+    live = {"order_id": "integer"}
+    drift = _compare_columns(defined, live)
+    assert "ghost_col" in drift["missing_in_db"]
+
+
+def test_detect_schema_drift_undocumented_column():
+    from dataflow_agent.tools.drift_detector import _compare_columns
+    defined = {"order_id": {"name": "order_id", "data_type": "integer"}}
+    live = {"order_id": "integer", "new_col": "text"}
+    drift = _compare_columns(defined, live)
+    assert any("new_col" in u for u in drift["undocumented"])
+
+
+def test_detect_schema_drift_type_mismatch():
+    from dataflow_agent.tools.drift_detector import _compare_columns
+    defined = {"order_id": {"name": "order_id", "data_type": "integer"}}
+    live = {"order_id": "text"}
+    drift = _compare_columns(defined, live)
+    assert any("order_id" in m for m in drift["type_mismatch"])
+
+
+def test_types_compatible_aliases():
+    from dataflow_agent.tools.drift_detector import _types_compatible
+    assert _types_compatible("boolean", "bool") is True
+    assert _types_compatible("timestamptz", "timestamp with time zone") is True
+    assert _types_compatible("integer", "text") is False
+
+
 def test_trace_lineage_depth_limited():
     from dataflow_agent.tools.framework.dbt import trace_dbt_lineage
     result = trace_dbt_lineage.invoke({
