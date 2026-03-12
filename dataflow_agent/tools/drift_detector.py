@@ -32,7 +32,7 @@ def detect_schema_drift(
         return f"ERROR: schema.yml not found: {schema_yml_path}"
 
     try:
-        schema_data = yaml.safe_load(p.read_text("utf-8"))
+        schema_data: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8"))
     except Exception as exc:
         return f"ERROR parsing schema.yml: {exc}"
 
@@ -46,16 +46,18 @@ def detect_schema_drift(
             return f"ERROR: Model '{model_name}' not found in {schema_yml_path}"
 
     results: list[str] = []
+
     for model in models:
         name = model.get("name", "unknown")
-        col_defs = model.get("columns", [])
-
-        defined_columns: dict[str, dict] = {
-            col.get("name", "").lower(): col for col in col_defs
+        defined_columns = {
+            col["name"].lower(): col
+            for col in model.get("columns", [])
+            if "name" in col
         }
 
         live_columns = _fetch_live_columns(db_type, connection_string, name)
         if isinstance(live_columns, str):
+            # It's an error message
             results.append(f"Model: {name}\n  ERROR: {live_columns}\n")
             continue
 
@@ -65,7 +67,9 @@ def detect_schema_drift(
     return "\n".join(results) if results else "No drift detected."
 
 
-def _fetch_live_columns(db_type: str, connection_string: str, table: str) -> dict[str, str] | str:
+def _fetch_live_columns(
+    db_type: str, connection_string: str, table: str
+) -> dict[str, str] | str:
     """Return {col_name_lower: data_type} from the live DB, or an error string."""
     db_type = db_type.lower().strip()
     if db_type == "postgres":
@@ -120,13 +124,17 @@ def _fetch_snowflake_columns(connection_string: str, table: str) -> dict[str, st
         return "Snowflake connection_string must be: account/user/password[/database[/schema[/warehouse]]]"
 
     account, user, password = parts[0], parts[1], parts[2]
+    database = parts[3] if len(parts) > 3 else None
+    schema = parts[4] if len(parts) > 4 else None
+    warehouse = parts[5] if len(parts) > 5 else None
+
     conn_kwargs: dict = {"account": account, "user": user, "password": password}
-    if len(parts) > 3:
-        conn_kwargs["database"] = parts[3]
-    if len(parts) > 4:
-        conn_kwargs["schema"] = parts[4]
-    if len(parts) > 5:
-        conn_kwargs["warehouse"] = parts[5]
+    if database:
+        conn_kwargs["database"] = database
+    if schema:
+        conn_kwargs["schema"] = schema
+    if warehouse:
+        conn_kwargs["warehouse"] = warehouse
 
     try:
         conn = snowflake.connector.connect(**conn_kwargs)
@@ -144,7 +152,7 @@ def _fetch_snowflake_columns(connection_string: str, table: str) -> dict[str, st
 
 
 def _compare_columns(
-    defined: dict[str, dict],
+    defined: dict[str, Any],
     live: dict[str, str],
 ) -> dict[str, list[str]]:
     """Return drift categories: missing_in_db, undocumented, type_mismatch."""
@@ -152,21 +160,27 @@ def _compare_columns(
     undocumented: list[str] = []
     type_mismatch: list[str] = []
 
-    for col_name, col_def in defined.items():
+    for col_name in defined:
         if col_name not in live:
             missing_in_db.append(col_name)
-        else:
-            live_type = live[col_name].lower().strip()
-            declared_type = col_def.get("data_type", "").lower().strip()
-            if declared_type and not _types_compatible(declared_type, live_type):
-                type_mismatch.append(
-                    f"{col_name}  (db_type: {live_type})"
-                    + (f"  schema.yml={declared_type}, db={live_type}" if declared_type else "")
-                )
 
-    for col_name in live:
+    for col_name, live_type in live.items():
         if col_name not in defined:
-            undocumented.append(col_name)
+            undocumented.append(f"{col_name}  (db_type: {live_type})")
+
+    # Type mismatch: only when schema.yml explicitly declares data_type
+    for col_name, col_def in defined.items():
+        if col_name not in live:
+            continue
+        declared_type = col_def.get("data_type", "").lower().strip()
+        if not declared_type:
+            continue
+        live_type = live[col_name].lower().strip()
+        # Normalise common aliases
+        if declared_type != live_type and not _types_compatible(declared_type, live_type):
+            type_mismatch.append(
+                f"{col_name}  schema.yml={declared_type}, db={live_type}"
+            )
 
     return {
         "missing_in_db": missing_in_db,
@@ -177,23 +191,27 @@ def _compare_columns(
 
 def _types_compatible(t1: str, t2: str) -> bool:
     """Return True if two type strings are effectively equivalent aliases."""
-    aliases: list[set[str]] = [
+    aliases = [
+        {"integer", "int", "int4", "int8", "bigint", "smallint", "int2"},
+        {"character varying", "varchar", "text", "string"},
+        {"double precision", "float", "float8", "numeric", "decimal", "real", "float4"},
         {"boolean", "bool"},
+        {"timestamp without time zone", "timestamp", "datetime"},
         {"timestamp with time zone", "timestamptz"},
     ]
     for group in aliases:
         if t1 in group and t2 in group:
             return True
-    return t1 == t2
+    return False
 
 
 def _format_model_drift(name: str, drift: dict[str, list[str]]) -> str:
     missing = drift["missing_in_db"]
     undoc = drift["undocumented"]
     mismatch = drift["type_mismatch"]
-    total = len(missing) + len(undoc) + len(mismatch)
 
-    lines: list[str] = [f"Model: {name}"]
+    total = len(missing) + len(undoc) + len(mismatch)
+    lines = [f"Model: {name}"]
 
     if total == 0:
         lines.append("  No drift detected — schema.yml matches live table.\n")

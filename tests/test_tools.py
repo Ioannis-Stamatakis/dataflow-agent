@@ -332,7 +332,7 @@ def test_detect_schema_drift_undocumented_column():
     defined = {"order_id": {"name": "order_id", "data_type": "integer"}}
     live = {"order_id": "integer", "new_col": "text"}
     drift = _compare_columns(defined, live)
-    assert "new_col" in drift["undocumented"]
+    assert any("new_col" in u for u in drift["undocumented"])
 
 
 def test_detect_schema_drift_type_mismatch():
@@ -362,3 +362,133 @@ def test_trace_lineage_depth_limited():
     assert "int_order_items" in result or "stg_customers" in result
     # stg_orders is a grandparent (depth=2), should NOT appear
     assert "stg_orders" not in result
+
+
+# ---------------------------------------------------------------------------
+# Schema drift tests
+# ---------------------------------------------------------------------------
+
+def test_drift_missing_schema_file():
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": "/nonexistent/schema.yml",
+        "db_type": "postgres",
+        "connection_string": "postgresql://user:pass@localhost/db",
+    })
+    assert "ERROR" in result
+
+
+def test_drift_invalid_db_type():
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    import yaml, tempfile, os
+
+    schema = {"version": 2, "models": [{"name": "orders", "columns": [{"name": "id"}]}]}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+        yaml.dump(schema, f)
+        tmp = f.name
+    try:
+        result = detect_schema_drift.invoke({
+            "schema_yml_path": tmp,
+            "db_type": "mysql",
+            "connection_string": "mysql://user:pass@localhost/db",
+        })
+        assert "ERROR" in result or "Unknown" in result
+    finally:
+        os.unlink(tmp)
+
+
+def test_drift_model_not_found_in_schema(tmp_path):
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    import yaml
+
+    schema = {"version": 2, "models": [{"name": "orders", "columns": [{"name": "id"}]}]}
+    schema_file = tmp_path / "schema.yml"
+    schema_file.write_text(yaml.dump(schema))
+
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": str(schema_file),
+        "db_type": "postgres",
+        "connection_string": "postgresql://user:pass@localhost/db",
+        "model_name": "nonexistent_model",
+    })
+    assert "ERROR" in result
+    assert "nonexistent_model" in result
+
+
+def test_drift_postgres_connection_error(tmp_path):
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+    import yaml
+
+    schema = {
+        "version": 2,
+        "models": [{"name": "orders", "columns": [{"name": "order_id"}, {"name": "status"}]}],
+    }
+    schema_file = tmp_path / "schema.yml"
+    schema_file.write_text(yaml.dump(schema))
+
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": str(schema_file),
+        "db_type": "postgres",
+        "connection_string": "postgresql://fake:fake@localhost:9999/fakedb",
+    })
+    assert "ERROR" in result
+
+
+def test_drift_no_drift(tmp_path):
+    """When schema.yml exactly matches the live columns, no drift should be reported."""
+    from dataflow_agent.tools.drift_detector import (
+        _compare_columns,
+        _format_model_drift,
+    )
+
+    defined = {"order_id": {"name": "order_id"}, "status": {"name": "status"}}
+    live = {"order_id": "integer", "status": "text"}
+
+    drift = _compare_columns(defined, live)
+    assert drift["missing_in_db"] == []
+    assert drift["undocumented"] == []
+    assert drift["type_mismatch"] == []
+
+    output = _format_model_drift("orders", drift)
+    assert "No drift" in output
+
+
+def test_drift_missing_in_db(tmp_path):
+    from dataflow_agent.tools.drift_detector import _compare_columns
+
+    defined = {"order_id": {"name": "order_id"}, "discount_amount": {"name": "discount_amount"}}
+    live = {"order_id": "integer"}  # discount_amount missing
+
+    drift = _compare_columns(defined, live)
+    assert "discount_amount" in drift["missing_in_db"]
+
+
+def test_drift_undocumented_column(tmp_path):
+    from dataflow_agent.tools.drift_detector import _compare_columns
+
+    defined = {"order_id": {"name": "order_id"}}
+    live = {"order_id": "integer", "created_at": "timestamp without time zone"}
+
+    drift = _compare_columns(defined, live)
+    assert any("created_at" in u for u in drift["undocumented"])
+
+
+def test_drift_type_mismatch(tmp_path):
+    from dataflow_agent.tools.drift_detector import _compare_columns
+
+    defined = {"customer_id": {"name": "customer_id", "data_type": "string"}}
+    live = {"customer_id": "bigint"}
+
+    drift = _compare_columns(defined, live)
+    assert any("customer_id" in m for m in drift["type_mismatch"])
+
+
+def test_drift_type_aliases_no_false_positive():
+    from dataflow_agent.tools.drift_detector import _compare_columns
+
+    # varchar in schema.yml vs character varying in postgres — should NOT be a mismatch
+    defined = {"name": {"name": "name", "data_type": "varchar"}}
+    live = {"name": "character varying"}
+
+    drift = _compare_columns(defined, live)
+    assert drift["type_mismatch"] == []
