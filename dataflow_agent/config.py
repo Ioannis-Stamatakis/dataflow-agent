@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic import model_validator
 
 # Load .env from the project root (or wherever the user runs the CLI)
@@ -12,6 +12,8 @@ load_dotenv()
 
 
 class Config(BaseModel):
+    model_config = ConfigDict(frozen=False)
+
     gemini_api_key: str = Field(default="")
     gemini_model: str = Field(default="gemini-2.5-flash")
     postgres_url: str | None = Field(default=None)
