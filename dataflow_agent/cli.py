@@ -309,5 +309,36 @@ def lineage(
     )
 
 
+@app.command()
+def drift(
+    schema: Path = typer.Option(..., "--schema", "-s", help="Path to dbt schema.yml file"),
+    db: str = typer.Option(..., "--db", help="Database type: postgres|snowflake"),
+    connection: str = typer.Option(..., "--connection", "-c", help="Connection string (DSN for Postgres or account/user/pass/db/schema/wh for Snowflake)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Specific model name to check (default: all models in file)"),
+) -> None:
+    """Detect schema drift between a dbt schema.yml and the live database."""
+    if not schema.exists():
+        console.print(f"[red]schema.yml not found: {schema}[/red]")
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent drift[/bold cyan]\n"
+            f"Schema: [yellow]{schema}[/yellow]  |  Database: [yellow]{db}[/yellow]",
+            title="Detecting Schema Drift",
+            border_style="magenta",
+        )
+    )
+
+    from dataflow_agent.agent import run_drift
+
+    run_drift(
+        schema_yml_path=str(schema),
+        db_type=db,
+        connection_string=connection,
+        model_name=model or "",
+    )
+
+
 if __name__ == "__main__":
     app()

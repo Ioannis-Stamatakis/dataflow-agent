@@ -77,6 +77,12 @@ def _load_all_tools() -> list:
         pass
 
     try:
+        from dataflow_agent.tools.drift_detector import detect_schema_drift
+        tools.append(detect_schema_drift)
+    except ImportError:
+        pass
+
+    try:
         from dataflow_agent.tools.dbt_profiler import profile_dbt_project
         tools.append(profile_dbt_project)
     except ImportError:
@@ -427,6 +433,31 @@ def run_explain(
             Markdown(last.content),
             title="[bold yellow]Query Explanation[/bold yellow]",
             border_style="yellow",
+        )
+    )
+
+
+def run_drift(
+    schema_yml_path: str,
+    db_type: str,
+    connection_string: str,
+    model_name: str = "",
+) -> None:
+    from dataflow_agent.tools.drift_detector import detect_schema_drift
+
+    result = detect_schema_drift.invoke({
+        "schema_yml_path": schema_yml_path,
+        "db_type": db_type,
+        "connection_string": connection_string,
+        "model_name": model_name,
+    })
+
+    console.print()
+    console.print(
+        Panel(
+            result,
+            title="[bold magenta]Schema Drift Report[/bold magenta]",
+            border_style="magenta",
         )
     )
 
