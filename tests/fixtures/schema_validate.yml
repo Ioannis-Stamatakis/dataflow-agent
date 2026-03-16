@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: Customer dimension table — fully tested
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - not_null
+      - name: country_code
+        tests:
+          - accepted_values:
+              values: ["US", "GB", "DE", "FR"]
+
+  - name: fct_orders
+    description: Orders fact table — partially tested
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+      - name: gross_revenue
+      - name: total_discount
+      - name: status
+        tests:
+          - accepted_values:
+              values: ["pending", "shipped", "delivered", "cancelled"]
+
+  - name: stg_products
+    description: Products staging model — no columns documented
