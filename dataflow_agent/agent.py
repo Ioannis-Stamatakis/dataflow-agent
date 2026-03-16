@@ -94,6 +94,12 @@ def _load_all_tools() -> list:
     except ImportError:
         pass
 
+    try:
+        from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+        tools.append(validate_dbt_coverage)
+    except ImportError:
+        pass
+
     return tools
 
 
@@ -620,5 +626,74 @@ def run_drift(
             Markdown(last.content),
             title="[bold red]Schema Drift Analysis[/bold red]",
             border_style="red",
+        )
+    )
+
+
+def run_validate(
+    project_path: str,
+    schema_path: str = "",
+    model_name: str = "",
+    suggest: bool = False,
+) -> None:
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+
+    if not suggest:
+        result = validate_dbt_coverage.invoke({
+            "project_path": project_path,
+            "schema_path": schema_path,
+            "model_name": model_name,
+        })
+        console.print()
+        console.print(
+            Panel(
+                result,
+                title="[bold green]dbt Test Coverage[/bold green]",
+                border_style="green",
+            )
+        )
+        return
+
+    # AI-powered suggestions
+    tools = _load_all_tools()
+    graph = _build_graph(tools)
+
+    system = SystemMessage(content=(
+        "You are dataflow-agent, an expert dbt data engineer specializing in test coverage. "
+        "You have access to the validate_dbt_coverage tool. "
+        "When asked to suggest tests:\n"
+        "1. Call validate_dbt_coverage to retrieve the full coverage report.\n"
+        "2. For each untested column, suggest the most appropriate dbt test(s) from: "
+        "`not_null`, `unique`, `accepted_values`, `relationships`.\n"
+        "3. Output a ready-to-paste schema.yml patch for the untested columns.\n"
+        "4. Briefly explain your reasoning for each suggestion.\n"
+        "Be specific — name the actual models and columns."
+    ))
+
+    parts = [f"Please suggest tests for dbt project at: `{project_path}`"]
+    if schema_path:
+        parts.append(f"Schema file: `{schema_path}`")
+    if model_name:
+        parts.append(f"Model: `{model_name}`")
+    parts.append("\nCall validate_dbt_coverage first, then give your test suggestions.")
+
+    initial_state: AgentState = {
+        "messages": [system, HumanMessage(content="\n".join(parts))],
+        "framework": "dbt",
+        "project_path": project_path or None,
+        "fix_mode": False,
+        "diagnosis": None,
+    }
+
+    console.print("[dim]Analyzing test coverage...[/dim]")
+    final_state = graph.invoke(initial_state)
+    last = final_state["messages"][-1]
+
+    console.print()
+    console.print(
+        Panel(
+            Markdown(last.content),
+            title="[bold green]dbt Coverage Suggestions[/bold green]",
+            border_style="green",
         )
     )

@@ -354,5 +354,48 @@ def drift(
     )
 
 
+@app.command()
+def validate(
+    project: Path = typer.Argument(..., help="Path to the dbt project root"),
+    schema: Optional[Path] = typer.Option(None, "--schema", "-s", help="Explicit schema.yml path (default: auto-discover)"),
+    model_name: Optional[str] = typer.Option(None, "--model", "-m", help="Specific model name to check"),
+    suggest: bool = typer.Option(False, "--suggest", help="Use LLM to suggest missing tests (requires GEMINI_API_KEY)"),
+    model: Optional[str] = typer.Option(None, help="LLM model override"),
+) -> None:
+    """Check dbt schema.yml test coverage across all models. Works offline."""
+    if not project.exists():
+        console.print(f"[red]Project path not found: {project}[/red]")
+        raise typer.Exit(1)
+
+    if schema and not schema.exists():
+        console.print(f"[red]Schema file not found: {schema}[/red]")
+        raise typer.Exit(1)
+
+    if suggest:
+        config.require_gemini_key()
+
+    if model:
+        config.gemini_model = model
+
+    console.print(
+        Panel(
+            f"[bold cyan]dataflow-agent validate[/bold cyan]\n"
+            f"Project: [yellow]{project}[/yellow]"
+            + (f"  |  Model: [yellow]{model_name}[/yellow]" if model_name else ""),
+            title="dbt Test Coverage Validation",
+            border_style="green",
+        )
+    )
+
+    from dataflow_agent.agent import run_validate
+
+    run_validate(
+        project_path=str(project),
+        schema_path=str(schema) if schema else "",
+        model_name=model_name or "",
+        suggest=suggest,
+    )
+
+
 if __name__ == "__main__":
     app()
