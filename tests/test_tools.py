@@ -492,3 +492,126 @@ def test_drift_type_aliases_no_false_positive():
 
     drift = _compare_columns(defined, live)
     assert drift["type_mismatch"] == []
+
+
+# ---------------------------------------------------------------------------
+# validate_dbt_coverage tests
+# ---------------------------------------------------------------------------
+
+def test_validate_missing_project():
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    result = validate_dbt_coverage.invoke({"project_path": "/nonexistent/path"})
+    assert "ERROR" in result
+
+
+def test_validate_no_models_dir(tmp_path):
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    result = validate_dbt_coverage.invoke({"project_path": str(tmp_path)})
+    assert "ERROR" in result
+
+
+def test_validate_no_sql_models(tmp_path):
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    (tmp_path / "models").mkdir()
+    result = validate_dbt_coverage.invoke({"project_path": str(tmp_path)})
+    assert "ERROR" in result
+
+
+def test_validate_model_without_schema(tmp_path):
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "stg_orders.sql").write_text("select 1")
+    result = validate_dbt_coverage.invoke({"project_path": str(tmp_path)})
+    assert "stg_orders" in result
+    assert "WITHOUT SCHEMA ENTRY" in result
+
+
+def test_validate_full_coverage(tmp_path):
+    import yaml
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "dim_customers.sql").write_text("select 1")
+    schema = {
+        "version": 2,
+        "models": [{"name": "dim_customers", "columns": [
+            {"name": "customer_id", "tests": ["unique", "not_null"]},
+            {"name": "email", "tests": ["not_null"]},
+        ]}],
+    }
+    (models / "schema.yml").write_text(yaml.dump(schema))
+    result = validate_dbt_coverage.invoke({"project_path": str(tmp_path)})
+    assert "FULL TEST COVERAGE" in result
+    assert "dim_customers" in result
+
+
+def test_validate_partial_coverage(tmp_path):
+    import yaml
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "fct_orders.sql").write_text("select 1")
+    schema = {
+        "version": 2,
+        "models": [{"name": "fct_orders", "columns": [
+            {"name": "order_id", "tests": ["unique", "not_null"]},
+            {"name": "gross_revenue"},
+        ]}],
+    }
+    (models / "schema.yml").write_text(yaml.dump(schema))
+    result = validate_dbt_coverage.invoke({"project_path": str(tmp_path)})
+    assert "PARTIAL TEST COVERAGE" in result
+    assert "gross_revenue" in result
+
+
+def test_validate_model_filter(tmp_path):
+    import yaml
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "dim_customers.sql").write_text("select 1")
+    (models / "fct_orders.sql").write_text("select 1")
+    schema = {
+        "version": 2,
+        "models": [
+            {"name": "dim_customers", "columns": [{"name": "id", "tests": ["not_null"]}]},
+            {"name": "fct_orders", "columns": [{"name": "order_id"}]},
+        ],
+    }
+    (models / "schema.yml").write_text(yaml.dump(schema))
+    result = validate_dbt_coverage.invoke({
+        "project_path": str(tmp_path),
+        "model_name": "fct_orders",
+    })
+    assert "fct_orders" in result
+    assert "dim_customers" not in result
+
+
+def test_validate_fixture(tmp_path):
+    import shutil
+    from dataflow_agent.tools.schema_validator import validate_dbt_coverage
+    models = tmp_path / "models"
+    models.mkdir()
+    for name in ["dim_customers", "fct_orders", "stg_products"]:
+        (models / f"{name}.sql").write_text("select 1")
+    shutil.copy(FIXTURES / "schema_validate.yml", models / "schema.yml")
+    result = validate_dbt_coverage.invoke({"project_path": str(tmp_path)})
+    assert "dim_customers" in result
+    assert "fct_orders" in result
+    assert "gross_revenue" in result
+    assert "total_discount" in result
+    assert "COVERAGE SUMMARY" in result
+
+
+def test_validate_analyze_column_coverage_helper():
+    from dataflow_agent.tools.schema_validator import _analyze_column_coverage
+    node = {"columns": [
+        {"name": "id", "tests": ["unique", "not_null"]},
+        {"name": "amount"},
+        {"name": "status", "tests": ["accepted_values"]},
+    ]}
+    tested, untested = _analyze_column_coverage(node)
+    assert "id" in tested
+    assert "status" in tested
+    assert "amount" in untested
